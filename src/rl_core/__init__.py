@@ -18,7 +18,7 @@ from .replay_writer import ReplayWriter
 from .stats_processor import StatsProcessor
 from .sum_tree import SumTree
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rl-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reinforcement learning parts for threaded training pipelines: replay threads, Q inference, checkpoints, PPO"
 readme = "README.md"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "torch",
-    "ai-runtime @ git+https://github.com/ekazum/ai-runtime.git@v0.3.0",
+    "ai-runtime @ git+https://github.com/ekazum/ai-runtime.git@v0.3.1",
 ]
 authors = [{ name = "Eli Kazum", email = "ekazum@gmail.com" }]
 keywords = ["machine-learning", "reinforcement-learning", "ppo", "dqn", "replay-buffer", "pytorch"]
