@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rl-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Reinforcement learning parts for threaded training pipelines: replay threads, Q inference, checkpoints, PPO"
 readme = "README.md"
 license = "Apache-2.0"

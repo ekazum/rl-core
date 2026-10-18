@@ -69,8 +69,8 @@ class Counter:
     def log_buffer_stats(self, episode_index: int, metrics: dict) -> None:
         pass
 
-    def note_update(self, update_count: int) -> None:
-        self.updates = update_count
+    def note_update(self, count: int) -> None:
+        self.updates = count
 
 
 def q_network() -> nn.Module:

@@ -10,5 +10,5 @@ class LearnerTelemetryProtocol(Protocol):
     def transitions_pushed(self) -> int:
         """Transitions stored so far."""
 
-    def note_update(self, update_count: int) -> None:
+    def note_update(self, count: int) -> None:
         """The learner's update count after each step."""
