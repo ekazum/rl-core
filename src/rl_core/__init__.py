@@ -16,19 +16,22 @@ from .protocols import (ReplayBufferProtocol, ReplayTelemetryProtocol,
                         RowCodecProtocol, SnapshotStoreProtocol)
 from .q_net_request import QNetRequest
 from .q_network_worker import QNetworkWorker
+from .q_target_worker import QTargetWorker
 from .replay_reader import ReplayReader
 from .replay_writer import ReplayWriter
 from .stats_processor import StatsProcessor
 from .sum_tree import SumTree
+from .sync_request import SyncRequest
+from .target_request import TargetRequest
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
     "ColumnStore", "DenseCodec", "DrawEvent", "LatestRequest", "MASKED_LOGIT",
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
     "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
-    "QNetworkWorker", "ReplayBufferProtocol", "ReplayReader", "ReplayTelemetryProtocol",
-    "ReplayWriter", "RowCodecProtocol", "SnapshotStoreProtocol", "StatsProcessor",
-    "SumTree",
+    "QNetworkWorker", "QTargetWorker", "ReplayBufferProtocol", "ReplayReader",
+    "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "SnapshotStoreProtocol",
+    "StatsProcessor", "SumTree", "SyncRequest", "TargetRequest",
 ]

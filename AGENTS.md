@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.2.0"` (pulls `ai-runtime`, numpy,
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.3.0"` (pulls `ai-runtime`, numpy,
 torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -13,7 +13,7 @@ torch). Everything below is importable from the top level: `from rl_core import 
 |---|---|---|
 | PPO | `PPOPolicyNetwork`, `PPORolloutBatch` (GAE), `PPOUpdateWorker` (thread), `PPOCheckpointManager` | the environment loop that fills `PPORolloutBatch` |
 | Prioritized replay | `PrioritizedReplayBuffer`, `ColumnStore`, `DenseCodec`, `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | the batch type (with `num_rows`), a codec meeting `RowCodecProtocol` or a `DenseCodec` spec, a telemetry sink meeting `ReplayTelemetryProtocol`, the learner |
-| Value-network inference | `QNetworkWorker`, `QNetRequest` | the actors that send requests, the learner that trains the network |
+| Value-network inference | `QNetworkWorker`, `QNetRequest`, `QTargetWorker`, `TargetRequest`, `SyncRequest` | the network (any `nn.Module` mapping `(B, D)` to `(B, A)`), the actors that send requests, the learner that trains the network |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
 
@@ -75,6 +75,7 @@ thread's exception on `join`.
 | `PriorityUpdater(replay_buffer, priority_queue, shutdown_event)` | `(indices, td_errors)` items | `buffer.update_priorities` |
 | `StatsProcessor(stats_q, replay_buffer, telemetry, capacity, shutdown_event)` | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | `telemetry.log_buffer_stats` |
 | `QNetworkWorker(q_online, request_queue, shutdown_event, state_dim, max_rows)` | `QNetRequest(vectors, response=Future())` | `(L, A)` outputs into each future |
+| `QTargetWorker(q_target, target_queue, learner_device, shutdown_event, decode=None, name=...)` | `TargetRequest(inputs, response=Future())`, `SyncRequest(state_dict)` | `(B, A)` target values on `learner_device` into each future; syncs load into `q_target`; queued futures fail at shutdown |
 | `CheckpointWriter(write_queue, stats_q, checkpoint_manager, shutdown_event, keep_all)` | `CheckpointRequest`, `LatestRequest` | the store; `CheckpointEvent` on `stats_q` |
 | `PPOUpdateWorker(model, optimizer, rollout_queue, device, shutdown_event, epochs=4, minibatch_size=256, ...)` | `PPORolloutBatch` via `submit` | the model's weights |
 
@@ -93,12 +94,16 @@ DQN with prioritized replay (see `examples/cartpole_dqn/train.py`):
 
 1. A batch type with `num_rows`; `codec = DenseCodec({...})` naming its fields;
    `buffer = PrioritizedReplayBuffer(capacity, codec, ...)`; a telemetry sink.
-2. Queues: `write_queue`, bounded `prefetch_queue`, `priority_queue`.
-3. Start `ReplayWriter`, `PriorityUpdater`, `ReplayReader` and the learner, each with `ThreadHandle`.
-4. The learner takes `(indices, is_weights)` from `prefetch_queue`, `buffer.gather(indices)`, trains, and puts
-   `(indices, |td|)` on `priority_queue`.
-5. The actor steps the envs and puts one batch per step on `write_queue`.
-6. Stop: `shutdown.set()`, `SHUTDOWN_SENTINEL` on each queue, join reader, learner, writer, updater.
+2. Networks: `q_online` and `q_target` (same class, `q_target` loaded from `q_online`); a lock the learner holds
+   while it steps the optimizer.
+3. Queues: `write_queue`, bounded `prefetch_queue`, `priority_queue`, `target_queue`.
+4. Start `ReplayWriter`, `PriorityUpdater`, `ReplayReader`, `QTargetWorker(q_target, target_queue, ...)` and the
+   learner, each with `ThreadHandle`.
+5. The learner takes `(indices, is_weights)` from `prefetch_queue`, `buffer.gather(indices)`, puts
+   `TargetRequest(next_obs, Future())` on `target_queue` before its own forward, reads `future.result()`, trains,
+   and puts `(indices, |td|)` on `priority_queue`. Every N updates it puts `SyncRequest(cloned q_online state)`.
+6. The actor steps the envs and puts one batch per step on `write_queue`.
+7. Stop: `shutdown.set()`, `SHUTDOWN_SENTINEL` on each queue, join reader, learner, target worker, writer, updater.
 
 Prioritized replay with a value network, actors and checkpoints:
 
@@ -129,8 +134,12 @@ Prioritized replay with a value network, actors and checkpoints:
 - `ReplayReader` waits until `len(buffer) >= max(min_buffer_size, batch_size)` before the first draw.
 - Actor and learner share one process and the GIL. Pace the actor to the learner (wait while it is more than a
   set number of transitions ahead), or the actor's Python loop starves the learner thread.
-- With small networks on the CPU, call `torch.set_num_threads(1)`; torch's own threads otherwise contend with
-  the pipeline's.
+- With small networks on the CPU, set `os.environ["OMP_NUM_THREADS"] = "1"` before importing torch. Every thread
+  that calls torch gets its own OpenMP pool, and `torch.set_num_threads` does not reach threads started later.
+- `QTargetWorker` is the only code that forwards `q_target` or loads weights into it. Send it a cloned state dict,
+  taken under the learner's lock.
+- `decode(request)` runs on the target thread; put input preparation there (unpacking, host-to-device copies) so
+  the learner's thread does not pay for it.
 - Store a truncated (time-limit) step with `done=False`; only a terminal step ends the bootstrap.
 - `codec.encode` must return every column the codec names; `push_batch` raises otherwise.
 
@@ -139,7 +148,8 @@ Prioritized replay with a value network, actors and checkpoints:
 - `examples/cartpole_ppo/train.py` — PPO on gymnasium CartPole, CPU, seeded. `pip install "rl-core[examples]"`,
   then `python examples/cartpole_ppo/train.py`.
 - `examples/cartpole_dqn/train.py` — Double DQN with prioritized replay on CartPole, CPU: `DenseCodec`, the
-  writer, reader and priority-updater threads, a learner thread. `python examples/cartpole_dqn/train.py`.
+  writer, reader, priority-updater and target-network threads, a learner thread.
+  `python examples/cartpole_dqn/train.py`.
 
 ## The four repos
 
