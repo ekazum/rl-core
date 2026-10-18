@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.1.2"` (pulls `ai-runtime`, numpy,
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.2.0"` (pulls `ai-runtime`, numpy,
 torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -12,7 +12,7 @@ torch). Everything below is importable from the top level: `from rl_core import 
 | Area | rl-core provides | The project writes |
 |---|---|---|
 | PPO | `PPOPolicyNetwork`, `PPORolloutBatch` (GAE), `PPOUpdateWorker` (thread), `PPOCheckpointManager` | the environment loop that fills `PPORolloutBatch` |
-| Prioritized replay | `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | a buffer meeting `ReplayBufferProtocol`, a telemetry sink meeting `ReplayTelemetryProtocol` |
+| Prioritized replay | `PrioritizedReplayBuffer`, `ColumnStore`, `DenseCodec`, `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | the batch type (with `num_rows`), a codec meeting `RowCodecProtocol` or a `DenseCodec` spec, a telemetry sink meeting `ReplayTelemetryProtocol`, the learner |
 | Value-network inference | `QNetworkWorker`, `QNetRequest` | the actors that send requests, the learner that trains the network |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
@@ -20,7 +20,12 @@ torch). Everything below is importable from the top level: `from rl_core import 
 ## Protocols (`rl_core.protocols`)
 
 ```python
-class ReplayBufferProtocol(Protocol):
+class RowCodecProtocol(Protocol):
+    def columns(self) -> dict[str, tuple[tuple[int, ...], np.dtype | type]]: ...
+                                                        # name -> (row_shape, dtype)
+    def encode(self, batch) -> dict[str, np.ndarray]: ...  # one (num_rows, *row_shape) array per column
+
+class ReplayBufferProtocol(Protocol):                   # PrioritizedReplayBuffer meets it
     def push_batch(self, batch) -> None: ...            # batch.num_rows transitions
     def draw_block(self, batch_size: int, n_batches: int) -> list[tuple[np.ndarray, np.ndarray]]: ...
                                                         # n_batches (indices, is_weights) draws
@@ -40,7 +45,22 @@ class SnapshotStoreProtocol(Protocol):
     def delete_snapshot(self, path: Path) -> None: ...
 ```
 
-`SumTree(capacity)` (`build`, `update`, `sample`, `total`) is the usual base for a `draw_block` with priorities.
+## The replay buffer
+
+```python
+PrioritizedReplayBuffer(capacity, codec, alpha, beta_is_start, n_anneal, priority_floor,
+                        seed_seq: np.random.SeedSequence, stats_q: queue.Queue | None = None)
+buffer.push_batch(batch)                     # codec.encode(batch) off the lock, rows at max priority
+buffer.draw_block(batch_size, n_batches)     # [(indices, is_weights), ...]
+buffer.gather(indices) -> dict[str, np.ndarray]           # every column, allocated
+buffer.gather_into(indices, out: dict[str, np.ndarray])   # named columns into your arrays
+buffer.update_priorities(indices, td_errors) # (|td| + priority_floor) ** alpha
+DenseCodec({"obs": ((4,), np.float32), "action": ((), np.int64), ...})  # stores batch.<name> as-is
+```
+
+`alpha=0` gives uniform replay. Rows are fixed-shape numpy columns in CPU memory and are drawn one at a time;
+n-step returns and sequence sampling are the project's. A project with a compact row layout writes its own codec;
+`ColumnStore` and `SumTree(capacity)` are also usable alone.
 
 ## Threads and their queues
 
@@ -69,7 +89,18 @@ PPO (see `examples/cartpole_ppo/train.py`):
 4. Optional: `PPOCheckpointManager(dir).save_snapshot(model, updater.updates, meta)`.
 5. `shutdown.set()`; `updater.join()`.
 
-Prioritized replay with a value network:
+DQN with prioritized replay (see `examples/cartpole_dqn/train.py`):
+
+1. A batch type with `num_rows`; `codec = DenseCodec({...})` naming its fields;
+   `buffer = PrioritizedReplayBuffer(capacity, codec, ...)`; a telemetry sink.
+2. Queues: `write_queue`, bounded `prefetch_queue`, `priority_queue`.
+3. Start `ReplayWriter`, `PriorityUpdater`, `ReplayReader` and the learner, each with `ThreadHandle`.
+4. The learner takes `(indices, is_weights)` from `prefetch_queue`, `buffer.gather(indices)`, trains, and puts
+   `(indices, |td|)` on `priority_queue`.
+5. The actor steps the envs and puts one batch per step on `write_queue`.
+6. Stop: `shutdown.set()`, `SHUTDOWN_SENTINEL` on each queue, join reader, learner, writer, updater.
+
+Prioritized replay with a value network, actors and checkpoints:
 
 1. Create the buffer, telemetry, store, and queues: `write_queue`, bounded `prefetch_queue`, `priority_queue`,
    `stats_q`, `request_queue`, checkpoint `write_queue`.
@@ -96,11 +127,19 @@ Prioritized replay with a value network:
   `CheckpointEvent` from `CheckpointWriter` is never dropped.
 - `CheckpointRequest.state_dict` is a CPU copy taken by the learner; the writer thread only writes it.
 - `ReplayReader` waits until `len(buffer) >= max(min_buffer_size, batch_size)` before the first draw.
+- Actor and learner share one process and the GIL. Pace the actor to the learner (wait while it is more than a
+  set number of transitions ahead), or the actor's Python loop starves the learner thread.
+- With small networks on the CPU, call `torch.set_num_threads(1)`; torch's own threads otherwise contend with
+  the pipeline's.
+- Store a truncated (time-limit) step with `done=False`; only a terminal step ends the bootstrap.
+- `codec.encode` must return every column the codec names; `push_batch` raises otherwise.
 
 ## Examples
 
 - `examples/cartpole_ppo/train.py` — PPO on gymnasium CartPole, CPU, seeded. `pip install "rl-core[examples]"`,
   then `python examples/cartpole_ppo/train.py`.
+- `examples/cartpole_dqn/train.py` — Double DQN with prioritized replay on CartPole, CPU: `DenseCodec`, the
+  writer, reader and priority-updater threads, a learner thread. `python examples/cartpole_dqn/train.py`.
 
 ## The four repos
 
@@ -109,4 +148,4 @@ Prioritized replay with a value network:
 | [ai-runtime](https://github.com/ekazum/ai-runtime) | threads, `SHUTDOWN_SENTINEL`, `Pipeline`, GPU batching, service supervision, SQLite stores, checkpoint managers, `YamlConfig` | standard library; `[torch]`, `[config]` |
 | [ai-llm](https://github.com/ekazum/ai-llm) | an LLM generation service: engine, GPU worker, server, client, stats store | ai-runtime |
 | [ai-ui](https://github.com/ekazum/ai-ui) | a Flask web shell and a runs dashboard over a SQLite runs DB | ai-runtime |
-| rl-core | the RL threads and data types above | ai-runtime |
+| rl-core | the RL threads, the replay buffer and the data types above | ai-runtime |
