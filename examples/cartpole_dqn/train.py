@@ -4,9 +4,9 @@
     python examples/cartpole_dqn/train.py
 
 rl-core supplies the buffer, its three client threads (writer, reader,
-priority updater) and the target-network thread; this file writes the
-network, the env loop, the batch type, the telemetry counter and the learner
-thread, and prints the mean return.
+priority updater), the target-network thread and the learner thread; this
+file writes the network, the env loop, the batch type, the telemetry counter
+and the learner's two hooks, and prints the mean return.
 """
 
 import argparse
@@ -27,8 +27,8 @@ from ai_runtime.pipeline import SHUTDOWN_SENTINEL
 from ai_runtime.thread_handle import ThreadHandle
 from torch import nn
 
-from rl_core import (DenseCodec, PrioritizedReplayBuffer, PriorityUpdater, QTargetWorker,
-                     ReplayReader, ReplayWriter, SyncRequest, TargetRequest)
+from rl_core import (DenseCodec, DQNBatch, DQNLearner, PrioritizedReplayBuffer,
+                     PriorityUpdater, QTargetWorker, ReplayReader, ReplayWriter, TargetRequest)
 
 OBS_DIM, N_ACTIONS = 4, 2
 
@@ -57,10 +57,11 @@ CODEC = DenseCodec({
 
 
 class Counter:
-    """The telemetry the replay threads report to; this example keeps the count only."""
+    """The telemetry the replay threads and the learner report to; counts only."""
 
     def __init__(self) -> None:
         self.transitions_pushed = 0
+        self.updates = 0
 
     def note_transitions(self, n: int) -> None:
         self.transitions_pushed += n
@@ -68,75 +69,32 @@ class Counter:
     def log_buffer_stats(self, episode_index: int, metrics: dict) -> None:
         pass
 
+    def note_update(self, update_count: int) -> None:
+        self.updates = update_count
+
 
 def q_network() -> nn.Module:
     return nn.Sequential(nn.Linear(OBS_DIM, 128), nn.ReLU(),
                          nn.Linear(128, 128), nn.ReLU(), nn.Linear(128, N_ACTIONS))
 
 
-class Learner:
-    """Learner thread: prefetched draws → gather → DDQN step → new priorities.
+def learner_hooks(buffer: PrioritizedReplayBuffer):
+    """The learner's two hooks; a queued item is the reader's ``(indices, is_weights)``."""
 
-    Target values come from the ``QTargetWorker`` thread, which owns ``q_target``;
-    the learner sends it ``TargetRequest``s and, every ``target_sync`` updates, a
-    ``SyncRequest``.
-    """
+    def make_target_request(item, future: Future) -> TargetRequest:
+        indices, _ = item
+        next_obs = np.empty((indices.shape[0], OBS_DIM), np.float32)
+        buffer.gather_into(indices, {"next_obs": next_obs})
+        return TargetRequest(torch.from_numpy(next_obs), future)
 
-    def __init__(self, buffer: PrioritizedReplayBuffer, q_online: nn.Module,
-                 network_lock: threading.Lock, prefetch_queue: queue.Queue,
-                 priority_queue: queue.Queue, target_queue: queue.Queue, counter: Counter,
-                 args, shutdown: threading.Event) -> None:
-        self._buffer = buffer
-        self._q_online = q_online
-        self._target_queue = target_queue
-        self._lock = network_lock
-        self._optimizer = torch.optim.Adam(q_online.parameters(), lr=args.lr)
-        self._prefetch_queue = prefetch_queue
-        self._priority_queue = priority_queue
-        self._counter = counter
-        self._args = args
-        self._shutdown = shutdown
-        self.updates = 0
+    def prepare(item) -> DQNBatch:
+        indices, weights = item
+        rows = {k: torch.from_numpy(v) for k, v in buffer.gather(indices).items()}
+        return DQNBatch(states=rows["obs"], next_states=rows["next_obs"],
+                        actions=rows["action"], rewards=rows["reward"], dones=rows["done"],
+                        is_weights=torch.from_numpy(weights), indices=indices)
 
-    def run(self) -> None:
-        while not self._shutdown.is_set():
-            # Hold the update rate to one per `train_every` stored transitions.
-            if self.updates * self._args.train_every >= self._counter.transitions_pushed:
-                self._shutdown.wait(0.001)
-                continue
-            try:
-                item = self._prefetch_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if item is SHUTDOWN_SENTINEL:
-                break
-            indices, weights = item
-            self._priority_queue.put((indices, self._step(indices, weights)))
-            self.updates += 1
-            if self.updates % self._args.target_sync == 0:
-                with self._lock:
-                    snapshot = {k: v.clone() for k, v in self._q_online.state_dict().items()}
-                self._target_queue.put(SyncRequest(snapshot))
-
-    def _step(self, indices: np.ndarray, weights: np.ndarray) -> np.ndarray:
-        """One Double DQN update; returns |TD| per row."""
-        rows = {k: torch.from_numpy(v) for k, v in self._buffer.gather(indices).items()}
-        # Ask for the target values first; the target thread works while this one does.
-        target_values = Future()
-        self._target_queue.put(TargetRequest(rows["next_obs"], target_values))
-        with torch.no_grad():
-            next_action = self._q_online(rows["next_obs"]).argmax(1, keepdim=True)
-            next_q = target_values.result().gather(1, next_action).squeeze(1)
-            target = rows["reward"] + self._args.gamma * next_q * (~rows["done"]).float()
-        with self._lock:
-            q = self._q_online(rows["obs"]).gather(1, rows["action"].unsqueeze(1)).squeeze(1)
-            td = target - q
-            loss = (torch.from_numpy(weights) * nn.functional.smooth_l1_loss(
-                q, target, reduction="none")).mean()
-            self._optimizer.zero_grad()
-            loss.backward()
-            self._optimizer.step()
-        return td.detach().abs().numpy()
+    return prepare, make_target_request
 
 
 def main() -> None:
@@ -165,8 +123,14 @@ def main() -> None:
     q_online, network_lock = q_network(), threading.Lock()
     q_target = q_network()
     q_target.load_state_dict(q_online.state_dict())
-    learner = Learner(buffer, q_online, network_lock, prefetch_queue, priority_queue,
-                      target_queue, counter, args, shutdown)
+    prepare, make_target_request = learner_hooks(buffer)
+    # No write_queue: this example keeps no checkpoints.
+    learner = DQNLearner(
+        q_online, torch.optim.Adam(q_online.parameters(), lr=args.lr), prefetch_queue,
+        target_queue, priority_queue, None, counter, network_lock, shutdown,
+        prepare=prepare, make_target_request=make_target_request, gamma=args.gamma,
+        lr_init=args.lr, lr_min=args.lr, target_sync_every=args.target_sync,
+        push_per_update_ratio=args.train_every)
 
     threads = {
         "writer": ThreadHandle(ReplayWriter(buffer, write_queue, counter, shutdown).run,
@@ -214,14 +178,14 @@ def main() -> None:
         obs = np.stack(starts)
         # Pace the actor to the learner: the actor's Python loop would otherwise hold the
         # GIL and starve the learner thread.
-        while (counter.transitions_pushed - learner.updates * args.train_every > 1_000
+        while (counter.transitions_pushed - counter.updates * args.train_every > 1_000
                and not shutdown.is_set()):
             shutdown.wait(0.001)
         if step % (steps_per_env // 10) == 0:
             recent = finished[-20:]
             print(f"env steps {step * args.envs:6d}: mean return "
                   f"{np.mean(recent) if recent else 0.0:6.1f} over the last {len(recent)} "
-                  f"episodes, {learner.updates} updates, buffer {len(buffer)}")
+                  f"episodes, {counter.updates} updates, buffer {len(buffer)}")
 
     # Stop: producers first, then the consumers; the writer and updater drain.
     shutdown.set()
