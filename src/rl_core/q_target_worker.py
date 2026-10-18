@@ -19,6 +19,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from typing import Any
 
 import torch
 from ai_runtime.pipeline import SHUTDOWN_SENTINEL
@@ -41,7 +42,7 @@ class QTargetWorker:
         target_queue: queue.Queue,
         learner_device: torch.device,
         shutdown_event: threading.Event,
-        decode: Callable[[object], torch.Tensor] | None = None,
+        decode: Callable[[Any], torch.Tensor] | None = None,
         name: str = "qtarget-worker",
     ) -> None:
         """Bind ``q_target`` (already on its device), the queue and the result device.
