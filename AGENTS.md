@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.1.1"` (pulls `ai-runtime`, numpy,
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.1.2"` (pulls `ai-runtime`, numpy,
 torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes

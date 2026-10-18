@@ -22,7 +22,7 @@ HIDDEN = (64, 64)
 class PPOPolicyNetwork(nn.Module):
     """Independent policy and value stacks over the same observation."""
 
-    HIDDEN = HIDDEN
+    HIDDEN: tuple[int, ...] = HIDDEN
 
     def __init__(self, input_dim: int, num_actions: int,
                  hidden: tuple = HIDDEN) -> None:

@@ -20,13 +20,13 @@ Reinforcement learning parts for threaded training pipelines, built on
 ## Install
 
 ```bash
-pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.1.1"
+pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.1.2"
 ```
 
 ## Example
 
 ```bash
-pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.1.1"
+pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.1.2"
 python examples/cartpole_ppo/train.py
 ```
 
