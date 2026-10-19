@@ -181,11 +181,12 @@ Prioritized replay with a value network, actors and checkpoints:
   writer, reader, priority-updater and target-network threads, `DQNLearner`.
   `python examples/cartpole_dqn/train.py`.
 
-## The four repos
+## The five repos
 
 | Repo | Gives | Depends on |
 |---|---|---|
-| [ai-runtime](https://github.com/ekazum/ai-runtime) | threads, `SHUTDOWN_SENTINEL`, `Pipeline`, GPU batching, service supervision, SQLite stores, checkpoint managers, `YamlConfig` | standard library; `[torch]`, `[config]` |
+| [ai-runtime](https://github.com/ekazum/ai-runtime) | threads, `SHUTDOWN_SENTINEL`, `ThreadStages`, GPU batching, service supervision, SQLite stores, checkpoint managers, `YamlConfig`, logging | standard library; `[torch]`, `[config]` |
 | [ai-llm](https://github.com/ekazum/ai-llm) | an LLM generation service: engine, GPU worker, server, client, stats store | ai-runtime |
 | [ai-ui](https://github.com/ekazum/ai-ui) | a Flask web shell and a runs dashboard over a SQLite runs DB | ai-runtime |
 | rl-core | the RL threads, the replay buffer and the data types above | ai-runtime |
+| [ai-pipeline](https://github.com/ekazum/ai-pipeline) | data preparation stages | ai-runtime; `[embed]`, `[llm]`, `[reduce]` |
