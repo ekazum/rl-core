@@ -15,7 +15,7 @@ import queue
 import threading
 
 import numpy as np
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 
 from rl_core.events.checkpoint_event import CheckpointEvent
 from rl_core.events.draw_event import DrawEvent

@@ -33,7 +33,7 @@ from concurrent.futures import Future
 from typing import Any
 
 import torch
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 from torch import nn
 from torch.nn import functional
 

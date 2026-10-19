@@ -22,7 +22,7 @@ from collections.abc import Callable
 from typing import Any
 
 import torch
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 from torch import nn
 
 from rl_core.sync_request import SyncRequest

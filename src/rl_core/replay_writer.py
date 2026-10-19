@@ -19,7 +19,7 @@ import logging
 import queue
 import threading
 
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 
 from rl_core.protocols.replay_buffer_protocol import ReplayBufferProtocol
 from rl_core.protocols.replay_telemetry_protocol import ReplayTelemetryProtocol

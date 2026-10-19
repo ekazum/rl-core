@@ -17,7 +17,7 @@ import queue
 import threading
 from pathlib import Path
 
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 
 from rl_core.checkpoint_state import CheckpointState
 from rl_core.events.checkpoint_event import CheckpointEvent

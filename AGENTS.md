@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.4.1"` (pulls `ai-runtime`, numpy,
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.4.2"` (pulls `ai-runtime`, numpy,
 torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -142,7 +142,7 @@ Prioritized replay with a value network, actors and checkpoints:
 3. The learner takes `(indices, is_weights)` from `prefetch_queue`, gathers the rows from the buffer, trains, puts
    `(indices, |td|)` on `priority_queue`, and puts `CheckpointRequest(update, cpu_state_dict, dims)` on the checkpoint
    queue.
-4. Stop: `shutdown.set()`, put `ai_runtime.pipeline.SHUTDOWN_SENTINEL` on each queue, join producers before consumers
+4. Stop: `shutdown.set()`, put `ai_runtime.SHUTDOWN_SENTINEL` on each queue, join producers before consumers
    (actors, reader, learner, then writer, updater, checkpoint writer, stats). `ReplayWriter` and `CheckpointWriter`
    drain their queues before exiting.
 

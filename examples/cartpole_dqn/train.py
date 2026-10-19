@@ -23,7 +23,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import gymnasium as gym
 import numpy as np
 import torch
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 from ai_runtime.thread_handle import ThreadHandle
 from torch import nn
 

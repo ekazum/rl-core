@@ -28,7 +28,7 @@ import queue
 import threading
 
 import torch
-from ai_runtime.pipeline import SHUTDOWN_SENTINEL
+from ai_runtime.thread_stages import SHUTDOWN_SENTINEL
 from torch import nn
 
 from rl_core.q_net_request import QNetRequest
