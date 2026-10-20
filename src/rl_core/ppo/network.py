@@ -7,6 +7,7 @@ the value, so one forward serves both.
 
 import logging
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -71,6 +72,26 @@ class PPOPolicyNetwork(nn.Module):
                          invalid: torch.Tensor) -> torch.Tensor:
         """Log-softmax over the valid actions; ``invalid`` is True where masked."""
         return torch.log_softmax(logits.masked_fill(invalid, MASKED_LOGIT), dim=1)
+
+    @staticmethod
+    def masked_log_probs_np(logits: np.ndarray, invalid: np.ndarray) -> np.ndarray:
+        """NumPy ``masked_log_probs`` for the rollout, in float32.
+
+        Same finite floor as the torch side, so the first update epoch
+        reproduces the stored log-probs.
+        """
+        z = np.where(invalid, MASKED_LOGIT, logits).astype(np.float64)
+        z = z - z.max(axis=1, keepdims=True)
+        return (z - np.log(np.exp(z).sum(axis=1, keepdims=True))).astype(np.float32)
+
+    @staticmethod
+    def sample(log_probs: np.ndarray, rng: np.random.Generator,
+               greedy: bool) -> np.ndarray:
+        """``(B,)`` one Gumbel-max draw per row, or the argmax when ``greedy``."""
+        if greedy:
+            return log_probs.argmax(axis=1).astype(np.int64)
+        noise = rng.gumbel(size=log_probs.shape)
+        return (log_probs + noise).argmax(axis=1).astype(np.int64)
 
     @staticmethod
     def entropy(log_probs: torch.Tensor,

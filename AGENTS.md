@@ -4,14 +4,14 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.4.2"` (pulls `ai-runtime`, numpy,
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.5.0"` (pulls `ai-runtime`, numpy,
 torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
 
 | Area | rl-core provides | The project writes |
 |---|---|---|
-| PPO | `PPOPolicyNetwork`, `PPORolloutBatch` (GAE), `PPOUpdateWorker` (thread), `PPOCheckpointManager` | the environment loop that fills `PPORolloutBatch` |
+| PPO | `PPOPolicyNetwork`, `PPORolloutBatch` (GAE), `PPOUpdateWorker` (thread), `PPOTrainer` (loop), `PPOCheckpointManager` | the environment loop that fills `PPORolloutBatch` (the `collect` hook), optional `report`, `after_update`, `finish` hooks |
 | Prioritized replay | `PrioritizedReplayBuffer`, `ColumnStore`, `DenseCodec`, `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | the batch type (with `num_rows`), a codec meeting `RowCodecProtocol` or a `DenseCodec` spec, a telemetry sink meeting `ReplayTelemetryProtocol`, the learner |
 | Value-network inference | `QNetworkWorker`, `QNetRequest`, `QTargetWorker`, `TargetRequest`, `SyncRequest` | the network (any `nn.Module` mapping `(B, D)` to `(B, A)`), the actors that send requests |
 | DQN training | `DQNLearner` (Double DQN loop, LR schedule, sync and checkpoint cadences), `DQNBatch` | the optimizer, the `prepare` and `make_target_request` hooks, a telemetry sink meeting `LearnerTelemetryProtocol` |
@@ -89,6 +89,25 @@ learner.get_state() / learner.load_state(state)   # optimizer + update counters,
 `durations` gives SMDP targets `γ^(τ-1) · (r + γ · next_q)`; without it the target is one-step. The settings are
 the project's values; rl-core has no config file.
 
+## The PPO trainer
+
+```python
+PPOTrainer(worker: PPOUpdateWorker, shutdown_event, *,
+           collect,               # () -> PPORolloutBatch from the current policy
+           timesteps,             # transitions to collect
+           max_updates=0,         # 0 = no cap
+           gamma=1.0, gae_lambda=0.95,
+           report=None,           # (index, rollout, steps) -> None, before each update
+           after_update=None,     # (updates) -> bool, after each update; True stops
+           finish=None,           # (updates, steps) -> None, after the loop, before the join
+           join_timeout=60.0)
+trainer.run() -> (updates, steps)  # starts the worker; on exit sets shutdown_event and joins it
+PPOPolicyNetwork.masked_log_probs_np(logits, invalid)   # numpy twin of masked_log_probs, float32
+PPOPolicyNetwork.sample(log_probs, rng, greedy)         # (B,) Gumbel-max draw, or argmax when greedy
+```
+
+`finish` runs after every stop, including a shutdown; check `shutdown_event` in it to skip work after a signal.
+
 ## Threads and their queues
 
 All take `shutdown_event: threading.Event`. `PPOUpdateWorker` is a `threading.Thread`; the others are plain classes
@@ -112,11 +131,11 @@ thread's exception on `join`.
 PPO (see `examples/cartpole_ppo/train.py`):
 
 1. `model = PPOPolicyNetwork(obs_dim, n_actions)`; an optimizer over its parameters.
-2. `updater = PPOUpdateWorker(model, optimizer, queue.Queue(maxsize=1), device, shutdown)`; `updater.start()`.
-3. Each iteration: collect steps into `PPORolloutBatch` pieces → `PPORolloutBatch.concatenate(parts)` →
-   `batch.compute_gae(gamma, gae_lambda)` → `updater.submit(batch)` → `updater.wait_idle()`.
-4. Optional: `PPOCheckpointManager(dir).save_snapshot(model, updater.updates, meta)`.
-5. `shutdown.set()`; `updater.join()`.
+2. `updater = PPOUpdateWorker(model, optimizer, queue.Queue(maxsize=1), device, shutdown)`, not started.
+3. `collect()`: step the envs into `PPORolloutBatch` pieces → `PPORolloutBatch.concatenate(parts)`.
+4. Optional `after_update`: `PPOCheckpointManager(dir).save_snapshot(model, updater.updates, meta)`, scoring.
+5. `PPOTrainer(updater, shutdown, collect=..., timesteps=..., gamma=..., gae_lambda=..., after_update=...).run()`;
+   it computes the advantages, submits, waits for each update, then sets `shutdown` and joins the worker.
 
 DQN with prioritized replay (see `examples/cartpole_dqn/train.py`):
 
@@ -148,11 +167,12 @@ Prioritized replay with a value network, actors and checkpoints:
 
 ## Rules that are easy to break
 
-- PPO is on-policy: call `updater.wait_idle()` after `submit` and before collecting the next rollout.
+- PPO is on-policy: without `PPOTrainer`, call `updater.wait_idle()` after `submit` and before collecting the next
+  rollout. With it, start no other user of the worker and leave the advantages to the trainer.
 - Collect with the model in eval mode and under `torch.no_grad()`; the stored log-probs must match what the update
   recomputes.
 - Use `PPOPolicyNetwork.masked_log_probs(logits, invalid)` on both sides; `invalid` is True for a masked action.
-  Numpy code masking the same way uses `MASKED_LOGIT`.
+  A numpy rollout uses `PPOPolicyNetwork.masked_log_probs_np`, which applies the same `MASKED_LOGIT` floor.
 - `PPORolloutBatch.rows` is an episode id. Give an env a new id when its episode ends and when the rollout ends, so
   GAE never joins two segments.
 - `forward` returns `(B, A + 1)`; split with `PPOPolicyNetwork.split(out)` into logits and value.

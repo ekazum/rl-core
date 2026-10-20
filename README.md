@@ -5,9 +5,10 @@ Reinforcement learning parts for threaded training pipelines, built on
 
 ## Parts
 
-- **PPO**: `PPOPolicyNetwork` (separate policy and value stacks, masked log-probs), `PPORolloutBatch` (flat
-  transitions with GAE), `PPOUpdateWorker` (the update thread), `PPOCheckpointManager` (`latest.pt`, `best.pt`,
-  per-update snapshots).
+- **PPO**: `PPOPolicyNetwork` (separate policy and value stacks, masked log-probs in torch and numpy, Gumbel-max
+  sampling), `PPORolloutBatch` (flat transitions with GAE), `PPOUpdateWorker` (the update thread), `PPOTrainer`
+  (the on-policy loop: collect, advantages, update, wait; the project supplies `collect` and optional hooks),
+  `PPOCheckpointManager` (`latest.pt`, `best.pt`, per-update snapshots).
 - **Prioritized replay**: `PrioritizedReplayBuffer` (thread-safe, columnar, sum-tree draws, β anneal) over a
   `ColumnStore`; the project's row layout comes from a codec (`RowCodecProtocol`), or `DenseCodec` stores each
   field as-is. Its client threads are `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor`.
@@ -27,13 +28,13 @@ Reinforcement learning parts for threaded training pipelines, built on
 ## Install
 
 ```bash
-pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.4.2"
+pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.5.0"
 ```
 
 ## Examples
 
 ```bash
-pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.4.2"
+pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.5.0"
 python examples/cartpole_ppo/train.py
 python examples/cartpole_dqn/train.py
 ```

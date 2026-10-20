@@ -3,8 +3,9 @@
     pip install "rl-core[examples]"
     python examples/cartpole_ppo/train.py
 
-rl-core supplies the network, the rollout batch with GAE, the update thread and
-its checkpoints; this file collects rollouts and prints the mean return.
+rl-core supplies the network, the rollout batch with GAE, the update thread,
+the trainer loop and its checkpoints; this file collects rollouts and prints
+the mean return.
 """
 
 import argparse
@@ -18,7 +19,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from rl_core import PPOCheckpointManager, PPOPolicyNetwork, PPORolloutBatch, PPOUpdateWorker
+from rl_core import (PPOCheckpointManager, PPOPolicyNetwork, PPORolloutBatch, PPOTrainer,
+                     PPOUpdateWorker)
 
 
 class CartPoleCollector:
@@ -37,7 +39,7 @@ class CartPoleCollector:
         self.finished: list[float] = []
 
     def collect(self) -> PPORolloutBatch:
-        """``steps`` steps of every env, as one batch with advantages filled in."""
+        """``steps`` steps of every env, as one batch; the trainer adds advantages."""
         parts = []
         n_actions = self._envs[0].action_space.n
         for _ in range(self._steps):
@@ -76,9 +78,7 @@ class CartPoleCollector:
         # Segments cut by the rollout's end continue under fresh ids next time.
         self._rows = np.arange(self._next_row, self._next_row + len(self._envs))
         self._next_row += len(self._envs)
-        batch = PPORolloutBatch.concatenate(parts)
-        batch.compute_gae(gamma=0.99, gae_lambda=0.95)
-        return batch
+        return PPORolloutBatch.concatenate(parts)
 
 
 def main() -> None:
@@ -95,27 +95,28 @@ def main() -> None:
     model.eval()
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     shutdown = threading.Event()
-    # The update thread trains on each rollout; collecting waits for it (on-policy).
+    # The update thread trains on each rollout; the trainer waits for it (on-policy).
     updater = PPOUpdateWorker(model, optimizer, queue.Queue(maxsize=1), torch.device("cpu"),
                               shutdown, epochs=4, minibatch_size=256)
-    updater.start()
     collector = CartPoleCollector(model, args.envs, args.steps, args.seed)
 
     with tempfile.TemporaryDirectory() as tmp:          # removed on exit
         checkpoints = PPOCheckpointManager(Path(tmp) / "checkpoints")
-        for iteration in range(1, args.iterations + 1):
-            batch = collector.collect()
-            updater.submit(batch)
-            updater.wait_idle()
+
+        def after_update(iteration: int) -> bool:
+            """Print the recent mean return and snapshot the policy."""
             recent = collector.finished[-20:]
             mean_return = float(np.mean(recent)) if recent else 0.0
             print(f"iteration {iteration:3d}: mean return {mean_return:6.1f} "
                   f"over the last {len(recent)} episodes")
             checkpoints.save_snapshot(model, updater.updates, {"mean_return": mean_return})
-        print(f"{len(checkpoints.list_snapshots())} snapshots written")
+            return False
 
-    shutdown.set()
-    updater.join(5)
+        PPOTrainer(updater, shutdown, collect=collector.collect,
+                   timesteps=args.iterations * args.envs * args.steps,
+                   max_updates=args.iterations, gamma=0.99, gae_lambda=0.95,
+                   after_update=after_update, join_timeout=5.0).run()
+        print(f"{len(checkpoints.list_snapshots())} snapshots written")
 
 
 if __name__ == "__main__":

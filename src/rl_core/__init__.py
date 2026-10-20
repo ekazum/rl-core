@@ -11,6 +11,7 @@ from .events import (CheckpointEvent, CheckpointRequest, DrawEvent, LatestReques
 from .ppo.checkpoint_manager import PPOCheckpointManager
 from .ppo.network import MASKED_LOGIT, PPOPolicyNetwork
 from .ppo.rollout_batch import PPORolloutBatch
+from .ppo.trainer import PPOTrainer
 from .ppo.update_worker import PPOUpdateWorker
 from .prioritized_replay_buffer import PrioritizedReplayBuffer
 from .priority_updater import PriorityUpdater
@@ -26,14 +27,14 @@ from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
 
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 
 __all__ = [
     "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
     "ColumnStore", "DenseCodec", "DQNBatch", "DQNLearner", "DrawEvent",
     "LatestRequest", "LearnerTelemetryProtocol", "MASKED_LOGIT",
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
-    "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
+    "PPOTrainer", "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
     "QNetworkWorker", "QTargetWorker", "ReplayBufferProtocol", "ReplayReader",
     "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "SnapshotStoreProtocol",
     "StatsProcessor", "SumTree", "SyncRequest", "TargetRequest",
