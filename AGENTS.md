@@ -4,8 +4,8 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.5.0"` (pulls `ai-runtime`, numpy,
-torch). Everything below is importable from the top level: `from rl_core import ...`.
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.6.0"` (pulls `ai-runtime` with its
+config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
 
@@ -17,6 +17,7 @@ torch). Everything below is importable from the top level: `from rl_core import 
 | DQN training | `DQNLearner` (Double DQN loop, LR schedule, sync and checkpoint cadences), `DQNBatch` | the optimizer, the `prepare` and `make_target_request` hooks, a telemetry sink meeting `LearnerTelemetryProtocol` |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
+| Evaluation | `EvalTask`, `ScoreTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
 
 ## Protocols (`rl_core.protocols`)
 
@@ -107,6 +108,24 @@ PPOPolicyNetwork.sample(log_probs, rng, greedy)         # (B,) Gumbel-max draw, 
 ```
 
 `finish` runs after every stop, including a shutdown; check `shutdown_event` in it to skip work after a signal.
+
+## Evaluation
+
+```python
+class EvalTask(ABC):                     # base of every evaluation task
+    def run(self, *args, **kwargs) -> dict: ...      # abstract; the metrics row
+class ScoreTask(EvalTask):
+    def run(self, split: str) -> dict: ...           # abstract; the current policy on one split
+EvalConfig.from_yaml(path)               # YamlConfig: batch_size, limit (0 = every row); subclass to add fields
+EvalStore(eval_dir, criterion)           # eval.db; criterion names the dev column where higher is better
+    .add_dev(epoch, checkpoint, metrics) # one dev_metrics row; epoch is the learner update count
+    .add_test(metrics)  .test_metrics()  # key/value pairs
+    .dev_rows()  .champion()             # rows by update; (update, checkpoint) of the best row, or None
+    .selection_state()                   # (best criterion, rows since it), from ai-runtime's DevSelectionStore
+```
+
+The tasks define what a manager calls; a project subclasses them and its manager calls each. No task holds another.
+`EvalStore` adds a project's metric columns to `dev_metrics` from the first row it is given.
 
 ## Threads and their queues
 

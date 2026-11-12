@@ -6,6 +6,9 @@ from .column_store import ColumnStore
 from .dense_codec import DenseCodec
 from .dqn_batch import DQNBatch
 from .dqn_learner import DQNLearner
+from .eval_config import EvalConfig
+from .eval_store import EvalStore
+from .eval_task import EvalTask
 from .events import (CheckpointEvent, CheckpointRequest, DrawEvent, LatestRequest,
                      OverwriteEvent)
 from .ppo.checkpoint_manager import PPOCheckpointManager
@@ -22,20 +25,22 @@ from .q_network_worker import QNetworkWorker
 from .q_target_worker import QTargetWorker
 from .replay_reader import ReplayReader
 from .replay_writer import ReplayWriter
+from .score_task import ScoreTask
 from .stats_processor import StatsProcessor
 from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
     "ColumnStore", "DenseCodec", "DQNBatch", "DQNLearner", "DrawEvent",
+    "EvalConfig", "EvalStore", "EvalTask",
     "LatestRequest", "LearnerTelemetryProtocol", "MASKED_LOGIT",
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
     "PPOTrainer", "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
     "QNetworkWorker", "QTargetWorker", "ReplayBufferProtocol", "ReplayReader",
-    "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "SnapshotStoreProtocol",
+    "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "ScoreTask", "SnapshotStoreProtocol",
     "StatsProcessor", "SumTree", "SyncRequest", "TargetRequest",
 ]
