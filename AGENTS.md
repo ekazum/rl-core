@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.6.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.7.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -18,6 +18,7 @@ config extra, numpy, torch). Everything below is importable from the top level: 
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
 | Evaluation | `EvalTask`, `ScoreTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
+| Actor feeding | `RowSampler`, `ActorFeeder` (thread) | a `RowSampler` subclass that knows the table's data, the actor threads that take the id batches, a telemetry sink meeting `FeederTelemetryProtocol` |
 
 ## Protocols (`rl_core.protocols`)
 
@@ -45,6 +46,12 @@ class LearnerTelemetryProtocol(Protocol):
     @property
     def transitions_pushed(self) -> int: ...             # read for the push-ratio throttle
     def note_update(self, count: int) -> None: ...      # the update count, after every step
+
+class FeederTelemetryProtocol(Protocol):
+    @property
+    def transitions_pushed(self) -> int: ...
+    @property
+    def update_count(self) -> int: ...                  # both read for the push-per-update pace
 
 class SnapshotStoreProtocol(Protocol):
     def write_snapshot(self, update: int, q_online_state_dict: dict, dims: dict) -> Path: ...
@@ -127,6 +134,17 @@ EvalStore(eval_dir, criterion)           # eval.db; criterion names the dev colu
 The tasks define what a manager calls; a project subclasses them and its manager calls each. No task holds another.
 `EvalStore` adds a project's metric columns to `dev_metrics` from the first row it is given.
 
+## Actor feeding
+
+```python
+RowSampler(n_rows, seed_seq)             # rows 0 .. n_rows-1, a new permutation per pass from seed_seq
+    .next() -> int                       # the next row; starts the next pass when this one is used up
+    .pass_counter  .n_rows
+    .get_snapshot()  .load_snapshot(d)   # pass counter and cursor; the pass order is regenerated from the seed
+```
+
+Subclass `RowSampler` to hold the table's data next to its rows; the feeder only calls `next()`.
+
 ## Threads and their queues
 
 All take `shutdown_event: threading.Event`. `PPOUpdateWorker` is a `threading.Thread`; the others are plain classes
@@ -137,6 +155,7 @@ thread's exception on `join`.
 |---|---|---|
 | `ReplayWriter(replay_buffer, write_queue, telemetry, shutdown_event)` | transition batches (`num_rows`) | `buffer.push_batch`, `telemetry.note_transitions` |
 | `ReplayReader(replay_buffer, prefetch_queue, batch_size, min_buffer_size, block_batches, shutdown_event)` | `buffer.draw_block` | `(indices, is_weights)` items on `prefetch_queue` |
+| `ActorFeeder(sampler, batch_queue, telemetry, batch_size, max_rows, push_per_update_ratio, shutdown_event)` | `sampler.next()`; the two counters of `FeederTelemetryProtocol` | `list[int]` of `batch_size` rows on `batch_queue`; stops after `max_rows` (0 = until shutdown); while `push_per_update_ratio > 0` and updates have started, waits while `transitions_pushed > ratio * update_count`; sets `shutdown_event` on a failure |
 | `PriorityUpdater(replay_buffer, priority_queue, shutdown_event)` | `(indices, td_errors)` items | `buffer.update_priorities` |
 | `StatsProcessor(stats_q, replay_buffer, telemetry, capacity, shutdown_event)` | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | `telemetry.log_buffer_stats` |
 | `QNetworkWorker(q_online, request_queue, shutdown_event, state_dim, max_rows)` | `QNetRequest(vectors, response=Future())` | `(L, A)` outputs into each future |

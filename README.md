@@ -23,21 +23,24 @@ Reinforcement learning parts for threaded training pipelines, built on
 - **Evaluation**: `EvalTask` and `ScoreTask` are the abstract tasks a training pipeline's manager calls; the
   project fills them in. `EvalConfig` holds the settings every evaluation pass shares, and `EvalStore` owns
   `eval.db`: one dev row per scored checkpoint, the test metrics and the best checkpoint.
-- **Protocols**: `LearnerTelemetryProtocol`, `ReplayBufferProtocol`, `ReplayTelemetryProtocol`, `RowCodecProtocol`,
-  `SnapshotStoreProtocol`.
+- **Actor feeding**: `RowSampler` gives every row of a table once per pass in a new random order per pass, with a
+  snapshot for resume; `ActorFeeder` is the thread that cuts its order into batches of row ids for the actor threads,
+  with an optional row cap and a pace tied to the learner's update count.
+- **Protocols**: `FeederTelemetryProtocol`, `LearnerTelemetryProtocol`, `ReplayBufferProtocol`,
+  `ReplayTelemetryProtocol`, `RowCodecProtocol`, `SnapshotStoreProtocol`.
 
 `AGENTS.md` lists the signatures, the assembly order and the rules to keep.
 
 ## Install
 
 ```bash
-pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.6.0"
+pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.7.0"
 ```
 
 ## Examples
 
 ```bash
-pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.6.0"
+pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.7.0"
 python examples/cartpole_ppo/train.py
 python examples/cartpole_dqn/train.py
 ```
