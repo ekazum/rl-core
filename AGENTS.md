@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.7.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.8.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -15,6 +15,7 @@ config extra, numpy, torch). Everything below is importable from the top level: 
 | Prioritized replay | `PrioritizedReplayBuffer`, `ColumnStore`, `DenseCodec`, `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | the batch type (with `num_rows`), a codec meeting `RowCodecProtocol` or a `DenseCodec` spec, a telemetry sink meeting `ReplayTelemetryProtocol`, the learner |
 | Value-network inference | `QNetworkWorker`, `QNetRequest`, `QTargetWorker`, `TargetRequest`, `SyncRequest` | the network (any `nn.Module` mapping `(B, D)` to `(B, A)`), the actors that send requests |
 | DQN training | `DQNLearner` (Double DQN loop, LR schedule, sync and checkpoint cadences), `DQNBatch` | the optimizer, the `prepare` and `make_target_request` hooks, a telemetry sink meeting `LearnerTelemetryProtocol` |
+| DDPG critic training | `DDPGLearner` (abstract critic loop: clip, step, soft target update, LR schedule, snapshot cadence, `max_updates` stop), `CriticStep` | the subclass's `_critic_backward` (forward and backward, returns a `CriticStep`), optional `_release`, `_on_step`, `_snapshot_state`; the two critics and the optimizer |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
 | Evaluation | `EvalTask`, `ScoreTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
@@ -97,6 +98,27 @@ learner.get_state() / learner.load_state(state)   # optimizer + update counters,
 `durations` gives SMDP targets `γ^(τ-1) · (r + γ · next_q)`; without it the target is one-step. The settings are
 the project's values; rl-core has no config file.
 
+## The DDPG critic learner
+
+```python
+class MyLearner(DDPGLearner):
+    def _critic_backward(self, batch) -> CriticStep:   # forward + loss.backward(); no optimizer step
+        ...
+    # optional: _release(batch), _on_step(update, metrics), _snapshot_state() -> dict
+
+MyLearner(critic, critic_target, optimizer, batch_queue, priority_queue, write_queue | None, telemetry,
+          shutdown_event, *, tau, lr_init, lr_min, max_updates, grad_clip,
+          checkpoint_every=0, push_per_update_ratio=0.0, snapshot_dims=None)
+CriticStep(indices, td_abs, metrics={})
+learner.done   # threading.Event, set once the final snapshot is queued
+```
+
+Per update: the learning rate is set (linear from `lr_init` to `lr_min` over `max_updates`), `_critic_backward`
+runs, the gradient norm is clipped at `grad_clip`, the optimizer steps, and `θ' ← (1 − τ) · θ' + τ · θ`. Then
+`(indices, td_abs)` goes on `priority_queue` and `_on_step` gets the metrics plus `grad_norm` and `lr`. With
+`push_per_update_ratio > 0`, an update waits until `(updates + 1) · ratio` transitions are stored. A failure sets
+`shutdown_event` and re-raises; reaching `max_updates` does not set it.
+
 ## The PPO trainer
 
 ```python
@@ -161,6 +183,7 @@ thread's exception on `join`.
 | `QNetworkWorker(q_online, request_queue, shutdown_event, state_dim, max_rows)` | `QNetRequest(vectors, response=Future())` | `(L, A)` outputs into each future |
 | `QTargetWorker(q_target, target_queue, learner_device, shutdown_event, decode=None, name=...)` | `TargetRequest(inputs, response=Future())`, `SyncRequest(state_dict)` | `(B, A)` target values on `learner_device` into each future; syncs load into `q_target`; queued futures fail at shutdown |
 | `DQNLearner(q_online, optimizer, batch_queue, target_queue, priority_queue, write_queue, telemetry, network_lock, shutdown_event, *, ...)` | queued batches via `prepare`; target values | `(indices, \|td\|)` on `priority_queue`; `TargetRequest`s and `SyncRequest`s on `target_queue`; `CheckpointRequest`, `LatestRequest` on `write_queue`; sets `shutdown_event` on exit |
+| `DDPGLearner` subclass `(critic, critic_target, optimizer, batch_queue, priority_queue, write_queue, telemetry, shutdown_event, *, ...)` | queued batches via `_critic_backward`; `transitions_pushed` for the throttle | `(indices, td_abs)` on `priority_queue`; `CheckpointRequest` on `write_queue`; `note_update`; sets `done` on exit, `shutdown_event` on a failure |
 | `CheckpointWriter(write_queue, stats_q, checkpoint_manager, shutdown_event, keep_all)` | `CheckpointRequest`, `LatestRequest` | the store; `CheckpointEvent` on `stats_q` |
 | `PPOUpdateWorker(model, optimizer, rollout_queue, device, shutdown_event, epochs=4, minibatch_size=256, ...)` | `PPORolloutBatch` via `submit` | the model's weights |
 

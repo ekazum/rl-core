@@ -4,6 +4,8 @@ from .actor_feeder import ActorFeeder
 from .checkpoint_state import CheckpointState
 from .checkpoint_writer import CheckpointWriter
 from .column_store import ColumnStore
+from .critic_step import CriticStep
+from .ddpg_learner import DDPGLearner
 from .dense_codec import DenseCodec
 from .dqn_batch import DQNBatch
 from .dqn_learner import DQNLearner
@@ -33,11 +35,11 @@ from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "ActorFeeder", "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
-    "ColumnStore", "DenseCodec", "DQNBatch", "DQNLearner", "DrawEvent",
+    "ColumnStore", "CriticStep", "DDPGLearner", "DenseCodec", "DQNBatch", "DQNLearner", "DrawEvent",
     "EvalConfig", "EvalStore", "EvalTask", "FeederTelemetryProtocol",
     "LatestRequest", "LearnerTelemetryProtocol", "MASKED_LOGIT",
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
