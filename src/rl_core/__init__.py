@@ -36,7 +36,7 @@ from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "ActorFeeder", "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",

@@ -1,13 +1,15 @@
 """``DDPGLearner`` — the DDPG critic update loop and its update-keyed cadences.
 
 Takes batches from ``batch_queue``, lets the subclass run the critic's forward and backward pass
-(``_critic_backward``: gradients accumulated, one ``CriticStep`` returned), clips the gradient norm, steps the
-optimizer, moves the target critic toward the critic, hands ``(indices, |td|)`` to the ``PriorityUpdater``, lowers
-the learning rate linearly over ``max_updates``, and queues critic snapshots for the ``CheckpointWriter``.
+(``_critic_backward``: gradients accumulated, one ``CriticStep`` returned), steps the optimizer, moves the target
+critic toward the critic, hands ``(indices, |td|)`` to the ``PriorityUpdater``, lowers the learning rate linearly
+over ``max_updates``, and queues critic snapshots for the ``CheckpointWriter``. With an actor optimizer, the actor
+step follows on the same batch: the subclass's ``_actor_backward`` back-propagates −Q through the frozen critic.
 
 Step::
 
-    target critic θ' ← (1 − τ) · θ' + τ · θ        after every optimizer step
+    target critic θ' ← (1 − τ) · θ' + τ · θ        after every critic step
+    actor ϕ ← ϕ + lr_a · ∇_ϕ Q(s, μ_ϕ(s))           every actor_every updates from actor_start_update
 
 Stops on ``shutdown_event``, a sentinel, or ``max_updates``; ``done`` is set once the final snapshot is queued.
 A failure sets ``shutdown_event`` and re-raises. With a ``GradientExchange``, one learner per critic copy averages
@@ -57,25 +59,30 @@ class DDPGLearner(ABC):
         lr_init: float,
         lr_min: float,
         max_updates: int,
-        grad_clip: float,
         checkpoint_every: int = 0,
         push_per_update_ratio: float = 0.0,
         snapshot_dims: dict | None = None,
         exchange: GradientExchange | None = None,
         rank: int = 0,
+        actor_optimizer: torch.optim.Optimizer | None = None,
+        actor_lr_init: float = 0.0,
+        actor_lr_min: float = 0.0,
+        actor_every: int = 1,
+        actor_start_update: int = 0,
     ) -> None:
         """Bind the two critics, the optimizer, the queues and the cadences.
 
-        ``lr`` falls linearly from ``lr_init`` to ``lr_min`` over ``max_updates``. ``checkpoint_every`` of 0, or no
-        ``write_queue``, turns snapshots off. ``push_per_update_ratio`` > 0 holds an update back until that many
-        transitions per update are stored. ``exchange`` and ``rank`` place this learner among several copies.
+        ``lr`` falls linearly from ``lr_init`` to ``lr_min`` over ``max_updates``, the actor's from ``actor_lr_init``
+        to ``actor_lr_min``. ``checkpoint_every`` of 0, or no ``write_queue``, turns snapshots off.
+        ``push_per_update_ratio`` > 0 holds an update back until that many transitions per update are stored.
+        ``exchange`` and ``rank`` place this learner among several copies; no ``actor_optimizer``, no actor step.
         """
         if not 0.0 < tau <= 1.0:
             raise ValueError(f"tau must be in (0, 1]; got {tau}")
         if max_updates < 1:
             raise ValueError(f"max_updates must be >= 1; got {max_updates}")
-        if grad_clip <= 0.0:
-            raise ValueError(f"grad_clip must be > 0; got {grad_clip}")
+        if actor_every < 1:
+            raise ValueError(f"actor_every must be >= 1; got {actor_every}")
         self._critic = critic
         self._critic_target = critic_target
         self._optimizer = optimizer
@@ -88,7 +95,11 @@ class DDPGLearner(ABC):
         self._lr_init = float(lr_init)
         self._lr_min = float(lr_min)
         self._max_updates = int(max_updates)
-        self._grad_clip = float(grad_clip)
+        self._actor_optimizer = actor_optimizer
+        self._actor_lr_init = float(actor_lr_init)
+        self._actor_lr_min = float(actor_lr_min)
+        self._actor_every = int(actor_every)
+        self._actor_start_update = int(actor_start_update)
         self._checkpoint_every = int(checkpoint_every)
         self._push_per_update_ratio = float(push_per_update_ratio)
         self._snapshot_dims = dict(snapshot_dims or {})
@@ -111,6 +122,10 @@ class DDPGLearner(ABC):
     @abstractmethod
     def _critic_backward(self, batch: Any) -> CriticStep:
         """Forward and backward pass of the critic on one batch; gradients accumulate, no optimizer step."""
+
+    def _actor_backward(self, batch: Any) -> dict[str, float]:
+        """Backward of −Q(s, μ(s)) into the actor's weights, critic frozen; its metrics. Needed with an actor."""
+        raise NotImplementedError(f"{type(self).__name__} has an actor optimizer but no _actor_backward")
 
     def _release(self, batch: Any) -> None:
         """After every batch, whatever the outcome; nothing by default."""
@@ -160,29 +175,59 @@ class DDPGLearner(ABC):
         return ratio > 0 and (self._update_count + 1) * ratio > self._telemetry.transitions_pushed
 
     def _step(self, batch: Any) -> bool:
-        """One critic update: backward, exchange, clip, step, target update, priorities; False on shutdown."""
-        self._set_lr()
+        """One update: critic backward, exchange, step, target update, then the actor step; False on shutdown."""
+        self._set_lr(self._optimizer, self._lr_init, self._lr_min)
         self._optimizer.zero_grad(set_to_none=True)
         result = self._critic_backward(batch)
         if self._exchange is not None and not self._exchange.average(self._rank):
             return False
-        grad_norm = float(nn.utils.clip_grad_norm_(self._critic.parameters(), self._grad_clip))
+        grad_norm = self._grad_norm(self._optimizer)
         self._optimizer.step()
         self._update_target()
         self._update_count += 1
         if self.primary:
             self._telemetry.note_update(self._update_count)
         self._put_priorities(result)
-        self._on_step(self._update_count, {
-            **result.metrics, "grad_norm": grad_norm, "lr": self._optimizer.param_groups[0]["lr"]})
+        metrics = {**result.metrics, "grad_norm": grad_norm, "lr": self._optimizer.param_groups[0]["lr"]}
+        if self._actor_due():
+            metrics.update(self._actor_step(batch))
+        self._on_step(self._update_count, metrics)
         return True
 
-    def _set_lr(self) -> None:
+    def _actor_due(self) -> bool:
+        """Whether this update has an actor step."""
+        if self._actor_optimizer is None or self._update_count < self._actor_start_update:
+            return False
+        return (self._update_count - self._actor_start_update) % self._actor_every == 0
+
+    def _actor_step(self, batch: Any) -> dict[str, float]:
+        """The actor's backward with the critic's weights frozen, then its optimizer step; the metrics."""
+        actor_optimizer = self._actor_optimizer
+        if actor_optimizer is None:
+            return {}
+        self._set_lr(actor_optimizer, self._actor_lr_init, self._actor_lr_min)
+        actor_optimizer.zero_grad(set_to_none=True)
+        self._critic.requires_grad_(False)
+        try:
+            metrics = self._actor_backward(batch)
+        finally:
+            self._critic.requires_grad_(True)
+        grad_norm = self._grad_norm(actor_optimizer)
+        actor_optimizer.step()
+        return {**metrics, "actor_grad_norm": grad_norm, "actor_lr": actor_optimizer.param_groups[0]["lr"]}
+
+    def _set_lr(self, optimizer: torch.optim.Optimizer, lr_init: float, lr_min: float) -> None:
         """The learning rate of this update: linear from ``lr_init`` to ``lr_min`` over ``max_updates``."""
         frac = min(1.0, self._update_count / self._max_updates)
-        lr = self._lr_init - (self._lr_init - self._lr_min) * frac
-        for group in self._optimizer.param_groups:
+        lr = lr_init - (lr_init - lr_min) * frac
+        for group in optimizer.param_groups:
             group["lr"] = lr
+
+    @staticmethod
+    def _grad_norm(optimizer: torch.optim.Optimizer) -> float:
+        """The total gradient norm over the optimizer's parameters; nothing is clipped."""
+        grads = [p.grad for group in optimizer.param_groups for p in group["params"] if p.grad is not None]
+        return float(nn.utils.get_total_norm(grads)) if grads else 0.0
 
     def _update_target(self) -> None:
         """θ' ← (1 − τ) · θ' + τ · θ, parameter by parameter."""

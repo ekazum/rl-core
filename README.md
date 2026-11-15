@@ -18,9 +18,10 @@ Reinforcement learning parts for threaded training pipelines, built on
 - **DQN training**: `DQNLearner` runs the Double DQN loop (optional SMDP durations), the learning-rate schedule,
   target syncs and checkpoint cadences; the project supplies the optimizer and two hooks that turn a drawn batch
   into a `DQNBatch` and a target request.
-- **DDPG critic training**: `DDPGLearner` is the abstract critic loop: gradient clipping, the optimizer step, the
-  soft target update, priorities, a linear learning-rate schedule, snapshots and the `max_updates` stop. The
-  project subclasses it with the critic's forward and backward pass, which returns a `CriticStep`.
+- **DDPG training**: `DDPGLearner` is the abstract critic loop: the optimizer step, the soft target update,
+  priorities, a linear learning-rate schedule, snapshots and the `max_updates` stop, with an optional actor step
+  that back-propagates −Q through the frozen critic. The project subclasses it with the critic's forward and
+  backward pass, which returns a `CriticStep`, and the actor's backward pass.
   `GradientExchange` averages the gradients of one learner per critic copy, for a critic on several devices.
 - **Checkpoints**: `CheckpointWriter` writes `CheckpointRequest` snapshots and `LatestRequest` states to a
   `SnapshotStoreProtocol` store, off the learner's thread; `CheckpointState` is the resume schema.
@@ -38,13 +39,13 @@ Reinforcement learning parts for threaded training pipelines, built on
 ## Install
 
 ```bash
-pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.9.0"
+pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.10.0"
 ```
 
 ## Examples
 
 ```bash
-pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.9.0"
+pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.10.0"
 python examples/cartpole_ppo/train.py
 python examples/cartpole_dqn/train.py
 ```

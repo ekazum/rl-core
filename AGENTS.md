@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.9.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.10.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -15,7 +15,7 @@ config extra, numpy, torch). Everything below is importable from the top level: 
 | Prioritized replay | `PrioritizedReplayBuffer`, `ColumnStore`, `DenseCodec`, `SumTree`, `ReplayWriter`, `ReplayReader`, `PriorityUpdater`, `StatsProcessor` | the batch type (with `num_rows`), a codec meeting `RowCodecProtocol` or a `DenseCodec` spec, a telemetry sink meeting `ReplayTelemetryProtocol`, the learner |
 | Value-network inference | `QNetworkWorker`, `QNetRequest`, `QTargetWorker`, `TargetRequest`, `SyncRequest` | the network (any `nn.Module` mapping `(B, D)` to `(B, A)`), the actors that send requests |
 | DQN training | `DQNLearner` (Double DQN loop, LR schedule, sync and checkpoint cadences), `DQNBatch` | the optimizer, the `prepare` and `make_target_request` hooks, a telemetry sink meeting `LearnerTelemetryProtocol` |
-| DDPG critic training | `DDPGLearner` (abstract critic loop: clip, step, soft target update, LR schedule, snapshot cadence, `max_updates` stop), `CriticStep`, `GradientExchange` (gradient averaging between one learner per critic copy) | the subclass's `_critic_backward` (forward and backward, returns a `CriticStep`), optional `_release`, `_on_step`, `_snapshot_state`; the two critics and the optimizer |
+| DDPG training | `DDPGLearner` (abstract critic loop: step, soft target update, LR schedules, snapshot cadence, `max_updates` stop; optional actor step through the frozen critic), `CriticStep`, `GradientExchange` (gradient averaging between one learner per critic copy) | the subclass's `_critic_backward` (forward and backward, returns a `CriticStep`), `_actor_backward` with an actor, optional `_release`, `_on_step`, `_snapshot_state`; the two critics and the optimizers |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
 | Evaluation | `EvalTask`, `ScoreTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
@@ -107,8 +107,10 @@ class MyLearner(DDPGLearner):
     # optional: _release(batch), _on_step(update, metrics), _snapshot_state() -> dict
 
 MyLearner(critic, critic_target, optimizer, batch_queue, priority_queue, write_queue | None, telemetry,
-          shutdown_event, *, tau, lr_init, lr_min, max_updates, grad_clip,
-          checkpoint_every=0, push_per_update_ratio=0.0, snapshot_dims=None, exchange=None, rank=0)
+          shutdown_event, *, tau, lr_init, lr_min, max_updates,
+          checkpoint_every=0, push_per_update_ratio=0.0, snapshot_dims=None, exchange=None, rank=0,
+          actor_optimizer=None, actor_lr_init=0.0, actor_lr_min=0.0, actor_every=1, actor_start_update=0)
+    # with an actor_optimizer: _actor_backward(batch) -> dict, backward of −Q(s, μ(s)) into the actor
 CriticStep(indices, td_abs, metrics={})
 learner.done      # threading.Event, set once the final snapshot is queued
 learner.primary   # rank == 0
@@ -117,8 +119,12 @@ exchange.average(rank) -> bool   # False once shutdown_event is set while waitin
 ```
 
 Per update: the learning rate is set (linear from `lr_init` to `lr_min` over `max_updates`), `_critic_backward`
-runs, the gradient norm is clipped at `grad_clip`, the optimizer steps, and `θ' ← (1 − τ) · θ' + τ · θ`. Then
-`(indices, td_abs)` goes on `priority_queue` and `_on_step` gets the metrics plus `grad_norm` and `lr`. With
+runs, the optimizer steps (no clipping; `grad_norm` is measured), and `θ' ← (1 − τ) · θ' + τ · θ`. Then
+`(indices, td_abs)` goes on `priority_queue`. With an `actor_optimizer`, from update `actor_start_update` every
+`actor_every` updates, the actor step runs on the same batch: the critic's weights are frozen, `_actor_backward`
+back-propagates −Q(s, μ(s)) into the actor, and the actor optimizer steps (its LR linear from `actor_lr_init` to
+`actor_lr_min`). `_on_step` gets the metrics plus `grad_norm` and `lr`, and on actor updates the actor's metrics plus
+`actor_grad_norm` and `actor_lr`. With
 `push_per_update_ratio > 0`, an update waits until `(updates + 1) · ratio` transitions are stored. A failure sets
 `shutdown_event` and re-raises; reaching `max_updates` does not set it.
 
