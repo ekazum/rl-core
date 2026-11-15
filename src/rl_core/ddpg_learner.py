@@ -10,7 +10,8 @@ Step::
     target critic θ' ← (1 − τ) · θ' + τ · θ        after every optimizer step
 
 Stops on ``shutdown_event``, a sentinel, or ``max_updates``; ``done`` is set once the final snapshot is queued.
-A failure sets ``shutdown_event`` and re-raises.
+A failure sets ``shutdown_event`` and re-raises. With a ``GradientExchange``, one learner per critic copy averages
+its gradients with the others before the clip; only rank 0 (the primary) reports updates to the telemetry.
 """
 
 import logging
@@ -25,6 +26,7 @@ from torch import nn
 
 from rl_core.critic_step import CriticStep
 from rl_core.events.checkpoint_request import CheckpointRequest
+from rl_core.gradient_exchange import GradientExchange
 from rl_core.protocols.learner_telemetry_protocol import LearnerTelemetryProtocol
 
 logger = logging.getLogger(__name__)
@@ -59,12 +61,14 @@ class DDPGLearner(ABC):
         checkpoint_every: int = 0,
         push_per_update_ratio: float = 0.0,
         snapshot_dims: dict | None = None,
+        exchange: GradientExchange | None = None,
+        rank: int = 0,
     ) -> None:
         """Bind the two critics, the optimizer, the queues and the cadences.
 
         ``lr`` falls linearly from ``lr_init`` to ``lr_min`` over ``max_updates``. ``checkpoint_every`` of 0, or no
         ``write_queue``, turns snapshots off. ``push_per_update_ratio`` > 0 holds an update back until that many
-        transitions per update are stored.
+        transitions per update are stored. ``exchange`` and ``rank`` place this learner among several copies.
         """
         if not 0.0 < tau <= 1.0:
             raise ValueError(f"tau must be in (0, 1]; got {tau}")
@@ -88,6 +92,8 @@ class DDPGLearner(ABC):
         self._checkpoint_every = int(checkpoint_every)
         self._push_per_update_ratio = float(push_per_update_ratio)
         self._snapshot_dims = dict(snapshot_dims or {})
+        self._exchange = exchange
+        self._rank = int(rank)
         self._update_count: int = 0
         self._last_snapshot: int = 0
         self.done = threading.Event()
@@ -96,6 +102,11 @@ class DDPGLearner(ABC):
     def updates(self) -> int:
         """Updates done."""
         return self._update_count
+
+    @property
+    def primary(self) -> bool:
+        """Whether this learner is rank 0, the one that reports updates."""
+        return self._rank == 0
 
     @abstractmethod
     def _critic_backward(self, batch: Any) -> CriticStep:
@@ -126,9 +137,11 @@ class DDPGLearner(ABC):
                 if batch is SHUTDOWN_SENTINEL:
                     break
                 try:
-                    self._step(batch)
+                    stepped = self._step(batch)
                 finally:
                     self._release(batch)
+                if not stepped:
+                    break
                 self._maybe_write_snapshot()
                 if self._update_count >= self._max_updates:
                     logger.info("DDPGLearner.run: max_updates=%d reached; stopping", self._max_updates)
@@ -146,19 +159,23 @@ class DDPGLearner(ABC):
         ratio = self._push_per_update_ratio
         return ratio > 0 and (self._update_count + 1) * ratio > self._telemetry.transitions_pushed
 
-    def _step(self, batch: Any) -> None:
-        """One critic update: backward, clip, optimizer step, target update, priorities, diagnostics."""
+    def _step(self, batch: Any) -> bool:
+        """One critic update: backward, exchange, clip, step, target update, priorities; False on shutdown."""
         self._set_lr()
         self._optimizer.zero_grad(set_to_none=True)
         result = self._critic_backward(batch)
+        if self._exchange is not None and not self._exchange.average(self._rank):
+            return False
         grad_norm = float(nn.utils.clip_grad_norm_(self._critic.parameters(), self._grad_clip))
         self._optimizer.step()
         self._update_target()
         self._update_count += 1
-        self._telemetry.note_update(self._update_count)
+        if self.primary:
+            self._telemetry.note_update(self._update_count)
         self._put_priorities(result)
         self._on_step(self._update_count, {
             **result.metrics, "grad_norm": grad_norm, "lr": self._optimizer.param_groups[0]["lr"]})
+        return True
 
     def _set_lr(self) -> None:
         """The learning rate of this update: linear from ``lr_init`` to ``lr_min`` over ``max_updates``."""

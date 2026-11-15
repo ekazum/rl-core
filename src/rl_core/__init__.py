@@ -12,6 +12,7 @@ from .dqn_learner import DQNLearner
 from .eval_config import EvalConfig
 from .eval_store import EvalStore
 from .eval_task import EvalTask
+from .gradient_exchange import GradientExchange
 from .events import (CheckpointEvent, CheckpointRequest, DrawEvent, LatestRequest,
                      OverwriteEvent)
 from .ppo.checkpoint_manager import PPOCheckpointManager
@@ -35,12 +36,12 @@ from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "ActorFeeder", "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
     "ColumnStore", "CriticStep", "DDPGLearner", "DenseCodec", "DQNBatch", "DQNLearner", "DrawEvent",
-    "EvalConfig", "EvalStore", "EvalTask", "FeederTelemetryProtocol",
+    "EvalConfig", "EvalStore", "EvalTask", "FeederTelemetryProtocol", "GradientExchange",
     "LatestRequest", "LearnerTelemetryProtocol", "MASKED_LOGIT",
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
     "PPOTrainer", "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
