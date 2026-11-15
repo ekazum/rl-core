@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.11.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.12.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -109,7 +109,8 @@ class MyLearner(DDPGLearner):
 MyLearner(critic, critic_target, optimizer, batch_queue, priority_queue, write_queue | None, telemetry,
           shutdown_event, *, tau, lr_init, lr_min, max_updates,
           checkpoint_every=0, push_per_update_ratio=0.0, snapshot_dims=None, exchange=None, rank=0,
-          actor_optimizer=None, actor_lr_init=0.0, actor_lr_min=0.0, actor_every=1, actor_start_update=0)
+          actor_optimizer=None, actor_lr_init=0.0, actor_lr_min=0.0, actor_every=1, actor_start_update=0,
+          actor_exchange=None)
     # with an actor_optimizer: _actor_backward(batch) -> dict, backward of −Q(s, μ(s)) into the actor
 CriticStep(indices, td_abs, metrics={})
 learner.done      # threading.Event, set once the final snapshot is queued
@@ -134,6 +135,10 @@ calls `average(rank)`: rank 0 sums the copies' gradients into its own, divides b
 into the others, so every copy takes the same step. Give each learner an equal share of every drawn batch. Only rank
 0 calls `note_update`; give the others no `write_queue`. Every `check_every` exchanges rank 0 compares the copies'
 weight sums and copies its weights into a copy that differs.
+
+Several actor copies: give learner ranks 0 … n − 1 an actor copy each, its own actor optimizer, and one shared
+`actor_exchange` (a `GradientExchange` over the actors); after the actor's backward pass the copies average their
+gradients the same way. Ranks from n on have no actor optimizer and train only the critic.
 
 ## The PPO trainer
 

@@ -69,6 +69,7 @@ class DDPGLearner(ABC):
         actor_lr_min: float = 0.0,
         actor_every: int = 1,
         actor_start_update: int = 0,
+        actor_exchange: GradientExchange | None = None,
     ) -> None:
         """Bind the two critics, the optimizer, the queues and the cadences.
 
@@ -76,6 +77,7 @@ class DDPGLearner(ABC):
         to ``actor_lr_min``. ``checkpoint_every`` of 0, or no ``write_queue``, turns snapshots off.
         ``push_per_update_ratio`` > 0 holds an update back until that many transitions per update are stored.
         ``exchange`` and ``rank`` place this learner among several copies; no ``actor_optimizer``, no actor step.
+        ``actor_exchange`` averages the actor's gradients with the other actor copies (ranks 0 … n − 1).
         """
         if not 0.0 < tau <= 1.0:
             raise ValueError(f"tau must be in (0, 1]; got {tau}")
@@ -100,6 +102,7 @@ class DDPGLearner(ABC):
         self._actor_lr_min = float(actor_lr_min)
         self._actor_every = int(actor_every)
         self._actor_start_update = int(actor_start_update)
+        self._actor_exchange = actor_exchange
         self._checkpoint_every = int(checkpoint_every)
         self._push_per_update_ratio = float(push_per_update_ratio)
         self._snapshot_dims = dict(snapshot_dims or {})
@@ -190,7 +193,10 @@ class DDPGLearner(ABC):
         self._put_priorities(result)
         metrics = {**result.metrics, "grad_norm": grad_norm, "lr": self._optimizer.param_groups[0]["lr"]}
         if self._actor_due():
-            metrics.update(self._actor_step(batch))
+            actor_metrics = self._actor_step(batch)
+            if actor_metrics is None:
+                return False
+            metrics.update(actor_metrics)
         self._on_step(self._update_count, metrics)
         return True
 
@@ -200,8 +206,8 @@ class DDPGLearner(ABC):
             return False
         return (self._update_count - self._actor_start_update) % self._actor_every == 0
 
-    def _actor_step(self, batch: Any) -> dict[str, float]:
-        """The actor's backward with the critic's weights frozen, then its optimizer step; the metrics."""
+    def _actor_step(self, batch: Any) -> dict[str, float] | None:
+        """The actor's backward with the critic frozen, exchange, then its optimizer step; None on shutdown."""
         actor_optimizer = self._actor_optimizer
         if actor_optimizer is None:
             return {}
@@ -212,6 +218,8 @@ class DDPGLearner(ABC):
             metrics = self._actor_backward(batch)
         finally:
             self._critic.requires_grad_(True)
+        if self._actor_exchange is not None and not self._actor_exchange.average(self._rank):
+            return None
         grad_norm = self._grad_norm(actor_optimizer)
         actor_optimizer.step()
         return {**metrics, "actor_grad_norm": grad_norm, "actor_lr": actor_optimizer.param_groups[0]["lr"]}
