@@ -31,12 +31,14 @@ from .replay_reader import ReplayReader
 from .replay_writer import ReplayWriter
 from .row_sampler import RowSampler
 from .score_task import ScoreTask
+from .select_task import SelectTask
 from .stats_processor import StatsProcessor
 from .sum_tree import SumTree
 from .sync_request import SyncRequest
 from .target_request import TargetRequest
+from .test_task import TestTask
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 __all__ = [
     "ActorFeeder", "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
@@ -46,6 +48,6 @@ __all__ = [
     "OverwriteEvent", "PPOCheckpointManager", "PPOPolicyNetwork", "PPORolloutBatch",
     "PPOTrainer", "PPOUpdateWorker", "PrioritizedReplayBuffer", "PriorityUpdater", "QNetRequest",
     "QNetworkWorker", "QTargetWorker", "ReplayBufferProtocol", "ReplayReader",
-    "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "RowSampler", "ScoreTask", "SnapshotStoreProtocol",
-    "StatsProcessor", "SumTree", "SyncRequest", "TargetRequest",
+    "ReplayTelemetryProtocol", "ReplayWriter", "RowCodecProtocol", "RowSampler", "ScoreTask", "SelectTask",
+    "SnapshotStoreProtocol", "StatsProcessor", "SumTree", "SyncRequest", "TargetRequest", "TestTask",
 ]

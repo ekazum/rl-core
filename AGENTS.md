@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.10.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.11.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -18,7 +18,7 @@ config extra, numpy, torch). Everything below is importable from the top level: 
 | DDPG training | `DDPGLearner` (abstract critic loop: step, soft target update, LR schedules, snapshot cadence, `max_updates` stop; optional actor step through the frozen critic), `CriticStep`, `GradientExchange` (gradient averaging between one learner per critic copy) | the subclass's `_critic_backward` (forward and backward, returns a `CriticStep`), `_actor_backward` with an actor, optional `_release`, `_on_step`, `_snapshot_state`; the two critics and the optimizers |
 | Checkpoints | `CheckpointWriter`, `CheckpointRequest`, `LatestRequest`, `CheckpointState` | a store meeting `SnapshotStoreProtocol` |
 | Stats events | `DrawEvent`, `OverwriteEvent`, `CheckpointEvent` | the buffer emits the first two |
-| Evaluation | `EvalTask`, `ScoreTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
+| Evaluation | `EvalTask`, `ScoreTask`, `SelectTask`, `TestTask` (abstract), `EvalConfig`, `EvalStore` (`eval.db`) | the task subclasses that produce the policy's outputs and rewards, a config subclass with its own fields, the manager that calls the tasks |
 | Actor feeding | `RowSampler`, `ActorFeeder` (thread) | a `RowSampler` subclass that knows the table's data, the actor threads that take the id batches, a telemetry sink meeting `FeederTelemetryProtocol` |
 
 ## Protocols (`rl_core.protocols`)
@@ -161,6 +161,10 @@ class EvalTask(ABC):                     # base of every evaluation task
     def run(self, *args, **kwargs) -> dict: ...      # abstract; the metrics row
 class ScoreTask(EvalTask):
     def run(self, split: str) -> dict: ...           # abstract; the current policy on one split
+class SelectTask(EvalTask):
+    def run(self, update: int, checkpoint: Path) -> dict: ...   # abstract; one checkpoint on dev, recorded
+class TestTask(EvalTask):
+    def run(self) -> dict: ...                       # abstract; the dev champion on test, once
 EvalConfig.from_yaml(path)               # YamlConfig: batch_size, limit (0 = every row); subclass to add fields
 EvalStore(eval_dir, criterion)           # eval.db; criterion names the dev column where higher is better
     .add_dev(epoch, checkpoint, metrics) # one dev_metrics row; epoch is the learner update count

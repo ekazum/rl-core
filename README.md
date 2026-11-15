@@ -25,8 +25,8 @@ Reinforcement learning parts for threaded training pipelines, built on
   `GradientExchange` averages the gradients of one learner per critic copy, for a critic on several devices.
 - **Checkpoints**: `CheckpointWriter` writes `CheckpointRequest` snapshots and `LatestRequest` states to a
   `SnapshotStoreProtocol` store, off the learner's thread; `CheckpointState` is the resume schema.
-- **Evaluation**: `EvalTask` and `ScoreTask` are the abstract tasks a training pipeline's manager calls; the
-  project fills them in. `EvalConfig` holds the settings every evaluation pass shares, and `EvalStore` owns
+- **Evaluation**: `EvalTask`, `ScoreTask`, `SelectTask` (each checkpoint on dev) and `TestTask` (the dev champion
+  on test) are the abstract tasks a training pipeline's manager calls; the project fills them in. `EvalConfig` holds the settings every evaluation pass shares, and `EvalStore` owns
   `eval.db`: one dev row per scored checkpoint, the test metrics and the best checkpoint.
 - **Actor feeding**: `RowSampler` gives every row of a table once per pass in a new random order per pass, with a
   snapshot for resume; `ActorFeeder` is the thread that cuts its order into batches of row ids for the actor threads,
@@ -39,13 +39,13 @@ Reinforcement learning parts for threaded training pipelines, built on
 ## Install
 
 ```bash
-pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.10.0"
+pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.11.0"
 ```
 
 ## Examples
 
 ```bash
-pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.10.0"
+pip install "rl-core[examples] @ git+https://github.com/ekazum/rl-core.git@v0.11.0"
 python examples/cartpole_ppo/train.py
 python examples/cartpole_dqn/train.py
 ```
