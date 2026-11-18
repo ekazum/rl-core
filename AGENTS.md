@@ -4,7 +4,7 @@ rl-core gives the threads and data types of a reinforcement learning training pi
 writing its environment loop and the few objects named in the protocols below, then wiring rl-core's parts with
 queues and one shared `threading.Event`.
 
-Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.12.0"` (pulls `ai-runtime` with its
+Install: `pip install "rl-core @ git+https://github.com/ekazum/rl-core.git@v0.13.0"` (pulls `ai-runtime` with its
 config extra, numpy, torch). Everything below is importable from the top level: `from rl_core import ...`.
 
 ## What rl-core provides, what the project writes
@@ -120,7 +120,7 @@ exchange.average(rank) -> bool   # False once shutdown_event is set while waitin
 ```
 
 Per update: the learning rate is set (linear from `lr_init` to `lr_min` over `max_updates`), `_critic_backward`
-runs, the optimizer steps (no clipping; `grad_norm` is measured), and `θ' ← (1 − τ) · θ' + τ · θ`. Then
+runs, the optimizer steps (no clipping; `grad_norm` is measured) and its gradients are freed, and `θ' ← (1 − τ) · θ' + τ · θ`. Then
 `(indices, td_abs)` goes on `priority_queue`. With an `actor_optimizer`, from update `actor_start_update` every
 `actor_every` updates, the actor step runs on the same batch: the critic's weights are frozen, `_actor_backward`
 back-propagates −Q(s, μ(s)) into the actor, and the actor optimizer steps (its LR linear from `actor_lr_init` to

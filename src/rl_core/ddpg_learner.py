@@ -186,6 +186,8 @@ class DDPGLearner(ABC):
             return False
         grad_norm = self._grad_norm(self._optimizer)
         self._optimizer.step()
+        # Freed now, so the critic's and the actor's gradients are never held at once.
+        self._optimizer.zero_grad(set_to_none=True)
         self._update_target()
         self._update_count += 1
         if self.primary:
@@ -222,6 +224,7 @@ class DDPGLearner(ABC):
             return None
         grad_norm = self._grad_norm(actor_optimizer)
         actor_optimizer.step()
+        actor_optimizer.zero_grad(set_to_none=True)
         return {**metrics, "actor_grad_norm": grad_norm, "actor_lr": actor_optimizer.param_groups[0]["lr"]}
 
     def _set_lr(self, optimizer: torch.optim.Optimizer, lr_init: float, lr_min: float) -> None:
