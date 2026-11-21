@@ -38,7 +38,7 @@ from .sync_request import SyncRequest
 from .target_request import TargetRequest
 from .test_task import TestTask
 
-__version__ = "0.13.0"
+__version__ = "0.13.1"
 
 __all__ = [
     "ActorFeeder", "CheckpointEvent", "CheckpointRequest", "CheckpointState", "CheckpointWriter",
